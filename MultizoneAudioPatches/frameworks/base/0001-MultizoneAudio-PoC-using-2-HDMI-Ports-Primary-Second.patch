@@ -1,0 +1,58 @@
+From 3afce6aafa22dc2eb1dd59b5caea56fd2de04ef0 Mon Sep 17 00:00:00 2001
+From: HariKrishna <hariconscious@gmail.com>
+Date: Wed, 23 Apr 2025 17:46:50 +0530
+Subject: [PATCH] [MultizoneAudio] PoC using 2 HDMI Ports (Primary & Secondary)
+ as 2 zones
+
+Change-Id: Ia4605cec111fa86ca9e6732044ee9e25cfe79730
+---
+ core/res/res/values/config.xml | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/core/res/res/values/config.xml b/core/res/res/values/config.xml
+index 8edf42af..da41297f 100644
+--- a/core/res/res/values/config.xml
++++ b/core/res/res/values/config.xml
+@@ -2626,7 +2626,7 @@
+ 
+     <!-- Whether the system enables per-display focus. If the system has the input method for each
+          display, this value should be true. -->
+-    <bool name="config_perDisplayFocusEnabled">false</bool>
++    <bool name="config_perDisplayFocusEnabled">true</bool>
+ 
+     <!-- Whether to use the system motion prediction model. Only set this value to true after
+          confirming that the model works well on your device. -->
+@@ -2989,10 +2989,10 @@
+     <bool name="config_syncstorageengine_masterSyncAutomatically">true</bool>
+ 
+     <!--  Maximum number of supported users -->
+-    <integer name="config_multiuserMaximumUsers">1</integer>
++    <integer name="config_multiuserMaximumUsers">10</integer>
+ 
+     <!-- Maximum number of users we allow to be running at a time -->
+-    <integer name="config_multiuserMaxRunningUsers">3</integer>
++    <integer name="config_multiuserMaxRunningUsers">5</integer>
+ 
+     <!-- Whether to delay user data locking for background user.
+          If false, user switched-out from user switching will still be in running state until
+@@ -3008,7 +3008,7 @@
+          Note: this flag does NOT control the Communal Profile, which is not a full user.
+          Should be false for all devices in production. Can be enabled only for development use
+          in automotive vehicles with passenger displays. -->
+-    <bool name="config_multiuserVisibleBackgroundUsers">false</bool>
++    <bool name="config_multiuserVisibleBackgroundUsers">true</bool>
+ 
+     <!-- Whether the device allows full users to start in background visible on the default display.
+          Should be false for all devices in production. Can be enabled only for development use
+@@ -3050,7 +3050,7 @@
+     <bool name="config_canSwitchToHeadlessSystemUser">false</bool>
+ 
+     <!-- Whether UI for multi user should be shown -->
+-    <bool name="config_enableMultiUserUI">false</bool>
++    <bool name="config_enableMultiUserUI">true</bool>
+ 
+     <!-- Whether multiple admins are allowed on the device. If set to true, new users can be created
+      with admin privileges and admin privileges can be granted/revoked from existing users. -->
+-- 
+2.43.0
+

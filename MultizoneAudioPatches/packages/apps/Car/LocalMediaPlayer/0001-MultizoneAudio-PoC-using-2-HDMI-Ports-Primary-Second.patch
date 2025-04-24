@@ -1,0 +1,314 @@
+From 0795e623e906c77fe49ae59559254611bbd6299b Mon Sep 17 00:00:00 2001
+From: HariKrishna <hariconscious@gmail.com>
+Date: Wed, 23 Apr 2025 17:46:50 +0530
+Subject: [PATCH] [MultizoneAudio] PoC using 2 HDMI Ports (Primary & Secondary)
+ as 2 zones
+
+Change-Id: I785b3296ba5a26d16050fb9e5b90b4b8c5d7c93b
+---
+ Android.bp                                    |  5 +-
+ AndroidManifest.xml                           | 22 +++++-
+ .../LocalMediaBrowserService.java             | 17 ++++-
+ .../localmediaplayer/MediaPlayerActivity.java | 56 +++++++++++++++
+ .../car/media/localmediaplayer/Player.java    | 72 +++++++++++++++++--
+ 5 files changed, 162 insertions(+), 10 deletions(-)
+ create mode 100644 src/com/android/car/media/localmediaplayer/MediaPlayerActivity.java
+
+diff --git a/Android.bp b/Android.bp
+index 8c9a515..7a92057 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -37,12 +37,15 @@ android_app {
+     platform_apis: true,
+     certificate: "platform",
+     privileged: true,
+-    min_sdk_version: "26",
++    min_sdk_version: "31",
+     target_sdk_version: "current",
+     static_libs: [
+         "LocalMediaPlayer-proto",
+         "androidx.legacy_legacy-support-v4",
++        "car-media-common",
++        "car-ui-lib",
+     ],
++    libs: ["android.car"],
+     optimize: {
+         enabled: false,
+     },
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index 00dce55..027c5b2 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -16,10 +16,15 @@
+ -->
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+     package="com.android.car.media.localmediaplayer"
+-    android:sharedUserId="com.android.car.media" >
++    android:sharedUserId="android.uid.system" >
+ 
+     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
++    <!-- for Context.startActivityAsUser() -->
++    <uses-permission android:name="android.permission.MANAGE_USERS"/>
++    <uses-permission android:name="android.permission.QUERY_USERS"/>
++    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS"/>
++    <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS_FULL"/>
+ 
+     <application
+         android:allowBackup="true"
+@@ -27,10 +32,15 @@
+         android:roundIcon="@mipmap/ic_launcher_round"
+         android:label="@string/app_name"
+         android:supportsRtl="true"
++        android:launchMode="standard"
++        android:resizeableActivity="true"
+         android:theme="@style/LocalMediaPlayerAppTheme" >
+         <service
+             android:name=".LocalMediaBrowserService"
+             android:exported="true"
++            android:launchMode="standard"
++            android:resizeableActivity="true"
++            android:taskAffinity="MediaPlayer.browser"
+             android:label="@string/app_name">
+             <intent-filter>
+                 <action android:name="android.media.browse.MediaBrowserService" />
+@@ -40,9 +50,19 @@
+ 
+         <activity
+             android:name=".PermissionsActivity"
++            android:launchMode="standard"
++            android:resizeableActivity="true"
++            android:taskAffinity="MediaPlayer.permissions"
++            android:exported="true"
+             android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen" >
+             <meta-data android:name="distractionOptimized" android:value="true"/>
+         </activity>
++        <activity android:name=".MediaPlayerActivity"
++            android:launchMode="standard"
++            android:resizeableActivity="true"
++            android:taskAffinity="MediaPlayer.container"
++            android:exported="true"
++            android:configChanges="screenSize|smallestScreenSize|orientation" />
+     </application>
+ 
+ </manifest>
+diff --git a/src/com/android/car/media/localmediaplayer/LocalMediaBrowserService.java b/src/com/android/car/media/localmediaplayer/LocalMediaBrowserService.java
+index 48a0ee5..d50523c 100644
+--- a/src/com/android/car/media/localmediaplayer/LocalMediaBrowserService.java
++++ b/src/com/android/car/media/localmediaplayer/LocalMediaBrowserService.java
+@@ -26,6 +26,12 @@ import android.os.Bundle;
+ import android.service.media.MediaBrowserService;
+ import androidx.annotation.Nullable;
+ import android.util.Log;
++import android.app.Activity;
++import android.app.ActivityManager;
++import android.app.ActivityOptions;
++import android.view.Display;
++import android.hardware.display.DisplayManager;
++import android.view.WindowManager;
+ 
+ import java.util.ArrayList;
+ import java.util.List;
+@@ -113,11 +119,20 @@ public class LocalMediaBrowserService extends MediaBrowserService {
+     public void onCreate() {
+         super.onCreate();
+ 
++        // Get the WindowManager
++        // WindowManager windowManager = (WindowManager)getSystemService(WINDOW_SERVICE);
++        // Get the Display object
++        // Display display = windowManager.getDefaultDisplay();
++        // Get the Display ID
++        int displayId = getDisplayId();
++        Log.d("TEST", "HK : LocalMediaBrowserService : Display ID: " + displayId);
++        int userId = getUserId();
++        Log.d("TEST", "HK : LocalMediaBrowserService : User ID: " + userId);
+         mDataModel = new DataModel(this);
+         addRootItems();
+         mSession = new MediaSession(this, MEDIA_SESSION_TAG);
+         setSessionToken(mSession.getSessionToken());
+-        mPlayer = new Player(this, mSession, mDataModel);
++        mPlayer = new Player(this, mSession, mDataModel, displayId, userId);
+         mSession.setCallback(mPlayer);
+         mSession.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS
+                 | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
+diff --git a/src/com/android/car/media/localmediaplayer/MediaPlayerActivity.java b/src/com/android/car/media/localmediaplayer/MediaPlayerActivity.java
+new file mode 100644
+index 0000000..87b36fe
+--- /dev/null
++++ b/src/com/android/car/media/localmediaplayer/MediaPlayerActivity.java
+@@ -0,0 +1,56 @@
++/*
++ * Copyright (c) 2016, The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++package com.android.car.media.localmediaplayer;
++
++import android.app.Activity;
++import android.app.ActivityManager;
++import android.app.ActivityOptions;
++import android.content.Intent;
++import android.os.Bundle;
++import android.util.Log;
++import android.view.Display;
++import android.hardware.display.DisplayManager;
++import android.view.WindowManager;
++
++public class MediaPlayerActivity extends Activity {
++
++    @Override
++    protected void onCreate(Bundle savedInstanceState) {
++        super.onCreate(savedInstanceState);
++
++        DisplayManager displayManager = (DisplayManager)getSystemService(DISPLAY_SERVICE);
++        Display[] displays = displayManager.getDisplays();
++
++        Intent intent = new Intent(this, MediaPlayerActivity.class);
++        ActivityOptions options = ActivityOptions.makeBasic();
++
++        ActivityManager activityManager = (ActivityManager)getSystemService(ACTIVITY_SERVICE);
++        int currentUser = activityManager.getCurrentUser();
++        Log.d("TEST", "HK : MediaPlayerActivity Current User ID: " + currentUser);
++
++        // Get the WindowManager
++        WindowManager windowManager = getWindowManager();
++        // Get the Display object
++        Display display = windowManager.getDefaultDisplay();
++        // Get the Display ID
++        int displayId = display.getDisplayId();
++        Log.d("TEST", "HK : MediaPlayerActivity : Display ID: " + displayId);
++        options.setLaunchDisplayId(displayId);
++
++        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
++        startActivity(intent, options.toBundle());
++    }
++}
+diff --git a/src/com/android/car/media/localmediaplayer/Player.java b/src/com/android/car/media/localmediaplayer/Player.java
+index 5c5cab2..69ff272 100644
+--- a/src/com/android/car/media/localmediaplayer/Player.java
++++ b/src/com/android/car/media/localmediaplayer/Player.java
+@@ -23,6 +23,9 @@ import android.content.Context;
+ import android.content.Intent;
+ import android.content.SharedPreferences;
+ import android.media.AudioManager;
++import android.media.AudioFocusRequest;
++import android.media.AudioAttributes;
++import android.app.ActivityManager;
+ import android.media.AudioManager.OnAudioFocusChangeListener;
+ import android.media.MediaDescription;
+ import android.media.MediaMetadata;
+@@ -35,6 +38,9 @@ import android.media.session.PlaybackState.CustomAction;
+ import android.os.Build;
+ import android.os.Bundle;
+ import android.util.Log;
++import static android.car.media.CarAudioManager.AUDIOFOCUS_EXTRA_REQUEST_ZONE_ID;
++import android.view.Display;
++import android.hardware.display.DisplayManager;
+ 
+ import com.android.car.media.localmediaplayer.nano.Proto.Playlist;
+ import com.android.car.media.localmediaplayer.nano.Proto.Song;
+@@ -89,6 +95,8 @@ public class Player extends MediaSession.Callback {
+ 
+     private List<QueueItem> mQueue;
+     private int mCurrentQueueIdx = 0;
++    private int mDisplayId = 0;
++    private int mUserId = 0;
+     private final SharedPreferences mSharedPrefs;
+ 
+     private NotificationManager mNotificationManager;
+@@ -98,11 +106,15 @@ public class Player extends MediaSession.Callback {
+     // TODO: Use multiple media players for gapless playback.
+     private final MediaPlayer mMediaPlayer;
+ 
+-    public Player(Context context, MediaSession session, DataModel dataModel) {
++    public Player(Context context, MediaSession session, DataModel dataModel, int displayId, int userId) {
+         mContext = context;
+         mDataModel = dataModel;
+         mAudioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+         mSession = session;
++        mDisplayId = displayId;
++        mUserId = userId;
++        Log.d("TEST", "HK : Player Current User ID: " + mUserId);
++        Log.d("TEST", "HK : Player Current Display ID: " + mDisplayId);
+         mSharedPrefs = context.getSharedPreferences(SHARED_PREFS_NAME, Context.MODE_PRIVATE);
+ 
+         mShuffle = new CustomAction.Builder(SHUFFLE, context.getString(R.string.shuffle),
+@@ -161,13 +173,59 @@ public class Player extends MediaSession.Callback {
+     }
+ 
+     private boolean requestAudioFocus(Runnable onSuccess) {
+-        int result = mAudioManager.requestAudioFocus(mAudioFocusListener, AudioManager.STREAM_MUSIC,
+-                AudioManager.AUDIOFOCUS_GAIN);
+-        if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+-            onSuccess.run();
+-            return true;
++        //HK
++        Bundle bundle = new Bundle();
++        DisplayManager displayManager = (DisplayManager)mContext.getSystemService(mContext.DISPLAY_SERVICE);
++        Display[] displays = displayManager.getDisplays();
++
++        if(displays.length == 2) {
++            Log.d("TEST", "HK : requestAudioFocus");
++            /*for (Display display : displays) {
++                Log.d("TEST", "HK : requestAudioFocus Display ID: " + display.getDisplayId());
++                if(display.getDisplayId() == Display.DEFAULT_DISPLAY) {
++                    bundle.putInt(AUDIOFOCUS_EXTRA_REQUEST_ZONE_ID, 0);
++                }
++                else {
++                    bundle.putInt(AUDIOFOCUS_EXTRA_REQUEST_ZONE_ID, 1);
++                }
++            }*/
++            // ActivityManager activityManager = (ActivityManager)mContext.getSystemService(mContext.ACTIVITY_SERVICE);
++            // int currentUser = activityManager.getCurrentUser();
++            Log.d("TEST", "HK : requestAudioFocus Current User ID: " + mUserId);
++            Log.d("TEST", "HK : requestAudioFocus Current Display ID: " + mDisplayId);
++            if(mUserId == 10) {
++                bundle.putInt(AUDIOFOCUS_EXTRA_REQUEST_ZONE_ID, 0);                
++            }
++            if(mUserId == 11) {
++                bundle.putInt(AUDIOFOCUS_EXTRA_REQUEST_ZONE_ID, 1);
++            }
++            AudioAttributes attributesWithZone = new AudioAttributes.Builder()
++                                                        .setUsage(AudioAttributes.USAGE_MEDIA)
++                                                        .addBundle(bundle)
++                                                        .build();
++
++            AudioFocusRequest audioFocusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
++                                                        .setAudioAttributes(attributesWithZone)
++                                                        .setAcceptsDelayedFocusGain(true)
++                                                        .setOnAudioFocusChangeListener(mAudioFocusListener)
++                                                        .build();
++
++            int result = mAudioManager.requestAudioFocus(audioFocusRequest);
++            if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
++                Log.e(TAG, "HK : requestAudioFocus granted");
++                onSuccess.run();
++                return true;
++            }
++        }
++        else {
++            int result = mAudioManager.requestAudioFocus(mAudioFocusListener, AudioManager.STREAM_MUSIC,
++                    AudioManager.AUDIOFOCUS_GAIN);
++            if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
++                onSuccess.run();
++                return true;
++            }
+         }
+-        Log.e(TAG, "Failed to acquire audio focus");
++        Log.e(TAG, "HK : Failed to acquire audio focus");
+         return false;
+     }
+ 
+-- 
+2.43.0
+

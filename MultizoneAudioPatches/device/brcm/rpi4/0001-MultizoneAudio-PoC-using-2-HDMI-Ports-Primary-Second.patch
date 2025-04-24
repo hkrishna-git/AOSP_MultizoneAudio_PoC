@@ -1,0 +1,429 @@
+From 55597fc8c6849d6b259987589c590642c8ad0e95 Mon Sep 17 00:00:00 2001
+From: HariKrishna <hariconscious@gmail.com>
+Date: Wed, 23 Apr 2025 17:46:50 +0530
+Subject: [PATCH] [MultizoneAudio] PoC using 2 HDMI Ports (Primary & Secondary)
+ as 2 zones
+
+---
+ aosp_rpi4_car.mk                              | 10 ++-
+ audio/audio_hw_hdmi.c                         | 53 +++++++++++++---
+ audio/audio_policy_configuration.xml          | 61 ++++++++++++++++---
+ boot/config.txt                               | 13 +++-
+ car/car_audio_configuration.xml               | 32 ++++++++--
+ car/display_layout_configuration.xml          | 16 +++++
+ car/display_settings.xml                      |  7 ++-
+ .../res/values/config.xml                     |  2 +-
+ vendor.prop                                   |  2 +-
+ 9 files changed, 168 insertions(+), 28 deletions(-)
+ create mode 100644 car/display_layout_configuration.xml
+
+diff --git a/aosp_rpi4_car.mk b/aosp_rpi4_car.mk
+index 6eef656..a2035e5 100644
+--- a/aosp_rpi4_car.mk
++++ b/aosp_rpi4_car.mk
+@@ -12,6 +12,10 @@ DEVICE_CAR_PATH := device/brcm/rpi4/car
+ PRODUCT_AAPT_CONFIG := normal mdpi hdpi
+ PRODUCT_AAPT_PREF_CONFIG := hdpi
+ PRODUCT_CHARACTERISTICS := automotive,nosdcard
++
++ENABLE_CLUSTER_OS_DOUBLE := false
++ENABLE_PASSENGER_SYSTEMUI_RRO := true
++
+ $(call inherit-product, $(SRC_TARGET_DIR)/product/full_base.mk)
+ $(call inherit-product, packages/services/Car/car_product/build/car.mk)
+ 
+@@ -65,7 +69,8 @@ PRODUCT_PACKAGES += \
+ 
+ # Display
+ PRODUCT_COPY_FILES += \
+-    $(DEVICE_CAR_PATH)/display_settings.xml:$(TARGET_COPY_OUT_VENDOR)/etc/display_settings.xml
++    $(DEVICE_CAR_PATH)/display_settings.xml:$(TARGET_COPY_OUT_VENDOR)/etc/display_settings.xml \
++    $(DEVICE_CAR_PATH)/display_layout_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/displayconfig/display_layout_configuration.xml
+ 
+ # EVS
+ ENABLE_CAREVSSERVICE_SAMPLE := true
+@@ -92,7 +97,8 @@ PRODUCT_PACKAGES += \
+ # Permissions
+ PRODUCT_COPY_FILES += \
+     frameworks/native/data/etc/android.software.activities_on_secondary_displays.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.activities_on_secondary_displays.xml \
+-    frameworks/native/data/etc/car_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/car_core_hardware.xml
++    frameworks/native/data/etc/car_core_hardware.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/car_core_hardware.xml \
++    frameworks/native/data/etc/android.software.managed_users.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.managed_users.xml
+ 
+ # Vehicle
+ PRODUCT_PACKAGES += \
+diff --git a/audio/audio_hw_hdmi.c b/audio/audio_hw_hdmi.c
+index 71261d7..e68ee38 100644
+--- a/audio/audio_hw_hdmi.c
++++ b/audio/audio_hw_hdmi.c
+@@ -83,6 +83,8 @@ struct alsa_stream_out {
+     bool unavailable;
+     int standby;
+     snd_pcm_uframes_t written;
++
++    char *bus_address;
+ };
+ 
+ static void get_alsa_device_name(char *name) {
+@@ -102,8 +104,10 @@ static int start_output_stream(struct alsa_stream_out *out)
+         return -ENODEV;
+ 
+     char device_name[PROPERTY_VALUE_MAX];
+-    get_alsa_device_name(device_name);
+-    ALOGI("start_output_stream: %s", device_name);
++    /*get_alsa_device_name(device_name);*/
++    ALOGE("HK : bus address : %s", out->bus_address);
++    sprintf(device_name, "default:CARD=%s", out->bus_address);
++    ALOGE("HK : start_output_stream: %s", device_name);
+ 
+     int r;
+     snd_pcm_t *pcm;
+@@ -351,7 +355,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer,
+ 
+     pthread_mutex_unlock(&adev->lock);
+ 
+-    ALOGV("out_write: out_frames:%ld", (long int)out_frames);
++    //ALOGE("HK : out_write: out_frames:%ld", (long int)out_frames);
+ 
+     ret = snd_pcm_writei(out->pcm, buffer, out_frames);
+     if (ret == out_frames) {
+@@ -521,9 +525,9 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+         audio_output_flags_t flags,
+         struct audio_config *config,
+         struct audio_stream_out **stream_out,
+-        const char *address __unused)
++        const char *address)
+ {
+-    ALOGV("adev_open_output_stream...");
++    ALOGE("HK : adev_open_output_stream...");
+ 
+     struct alsa_audio_device *ladev = (struct alsa_audio_device *)dev;
+     struct alsa_stream_out *out;
+@@ -533,6 +537,12 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
+     if (!out)
+         return -ENOMEM;
+ 
++    if (address) {
++        out->bus_address = (char *)calloc(strlen(address) + 1, sizeof(char));
++        strncpy(out->bus_address, address, strlen(address));
++        ALOGE("HK : adev_open_output_stream...%s", out->bus_address);
++    }
++
+     out->stream.common.get_sample_rate = out_get_sample_rate;
+     out->stream.common.set_sample_rate = out_set_sample_rate;
+     out->stream.common.get_buffer_size = out_get_buffer_size;
+@@ -710,12 +720,36 @@ static int adev_close(hw_device_t *device)
+     return 0;
+ }
+ 
++static int adev_set_audio_port_config(struct audio_hw_device *dev, const struct audio_port_config *config) 
++{
++    ALOGE("HK : adev_set_audio_port_config");
++    return 0;
++}
++
++static int adev_create_audio_patch(struct audio_hw_device *dev,
++    unsigned int num_sources,
++    const struct audio_port_config *sources,
++    unsigned int num_sinks,
++    const struct audio_port_config *sinks,
++    audio_patch_handle_t *handle) 
++{
++    ALOGE("HK : adev_create_audio_patch");
++    return 0;
++}
++
++static int adev_release_audio_patch(struct audio_hw_device *dev,
++    audio_patch_handle_t handle) 
++{
++    ALOGE("%s: HK : handle: %d", __func__, handle);
++    return 0;
++}
++
+ static int adev_open(const hw_module_t* module, const char* name,
+         hw_device_t** device)
+ {
+     struct alsa_audio_device *adev;
+ 
+-    ALOGV("adev_open: %s", name);
++    ALOGE("HK : adev_open: %s", name);
+ 
+     if (strcmp(name, AUDIO_HARDWARE_INTERFACE) != 0)
+         return -EINVAL;
+@@ -725,7 +759,7 @@ static int adev_open(const hw_module_t* module, const char* name,
+         return -ENOMEM;
+ 
+     adev->hw_device.common.tag = HARDWARE_DEVICE_TAG;
+-    adev->hw_device.common.version = AUDIO_DEVICE_API_VERSION_2_0;
++    adev->hw_device.common.version = AUDIO_DEVICE_API_VERSION_3_0;
+     adev->hw_device.common.module = (struct hw_module_t *) module;
+     adev->hw_device.common.close = adev_close;
+     adev->hw_device.init_check = adev_init_check;
+@@ -748,6 +782,11 @@ static int adev_open(const hw_module_t* module, const char* name,
+ 
+     adev->devices = AUDIO_DEVICE_NONE;
+ 
++    // New in AUDIO_DEVICE_API_VERSION_3_0
++    adev->hw_device.set_audio_port_config = adev_set_audio_port_config;
++    adev->hw_device.create_audio_patch = adev_create_audio_patch;
++    adev->hw_device.release_audio_patch = adev_release_audio_patch;
++
+     *device = &adev->hw_device.common;
+ 
+     return 0;
+diff --git a/audio/audio_policy_configuration.xml b/audio/audio_policy_configuration.xml
+index b2647e8..645716d 100644
+--- a/audio/audio_policy_configuration.xml
++++ b/audio/audio_policy_configuration.xml
+@@ -14,24 +14,38 @@
+     <modules>
+         <module name="primary" halVersion="2.0">
+             <attachedDevices>
+-                <item>Speaker</item>
++                <!--item>Speaker</item-->
++                <item>vc4hdmi0</item>
++                <item>vc4hdmi1</item>
+                 <item>Built-In Mic</item>
+             </attachedDevices>
+-            <defaultOutputDevice>Speaker</defaultOutputDevice>
++            <defaultOutputDevice>vc4hdmi0</defaultOutputDevice>
+             <mixPorts>
+-                <mixPort name="primary output" role="source" flags="AUDIO_OUTPUT_FLAG_PRIMARY">
++                <!--mixPort name="primary output" role="source" flags="AUDIO_OUTPUT_FLAG_PRIMARY">
+                     <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+                              samplingRates="48000"
+                              channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
+-                </mixPort>
++                </mixPort-->
+                 <mixPort name="primary input" role="sink">
+                     <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+                              samplingRates="8000 11025 12000 16000 22050 24000 32000 44100 48000"
+                              channelMasks="AUDIO_CHANNEL_IN_MONO AUDIO_CHANNEL_IN_STEREO"/>
+                 </mixPort>
++                <mixPort name="mixport_vc4hdmi0" role="source" flags="AUDIO_OUTPUT_FLAG_PRIMARY">
++                    <profile name="" 
++                             format="AUDIO_FORMAT_PCM_16_BIT"
++                             samplingRates="48000"
++                             channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
++                </mixPort>
++                <mixPort name="mixport_vc4hdmi1" role="source">
++                    <profile name="" 
++                             format="AUDIO_FORMAT_PCM_16_BIT"
++                             samplingRates="48000"
++                             channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
++                </mixPort>
+             </mixPorts>
+             <devicePorts>
+-                <devicePort tagName="Speaker" type="AUDIO_DEVICE_OUT_SPEAKER" role="sink">
++                <!--devicePort tagName="Speaker" type="AUDIO_DEVICE_OUT_SPEAKER" role="sink">
+                     <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+                              samplingRates="48000"
+                              channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
+@@ -75,10 +89,39 @@
+                     <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+                              samplingRates="8000 16000"
+                              channelMasks="AUDIO_CHANNEL_IN_MONO"/>
++                </devicePort-->
++                <devicePort tagName="Built-In Mic" type="AUDIO_DEVICE_IN_BUILTIN_MIC" role="source">
++                    <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
++                             samplingRates="8000 11025 12000 16000 22050 24000 32000 44100 48000"
++                             channelMasks="AUDIO_CHANNEL_IN_MONO AUDIO_CHANNEL_IN_STEREO"/>
++                </devicePort>
++                <devicePort tagName="vc4hdmi0" type="AUDIO_DEVICE_OUT_BUS" role="sink" address="vc4hdmi0">
++                    <profile name="" 
++                             format="AUDIO_FORMAT_PCM_16_BIT"
++                             samplingRates="48000"
++                             channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
++                    <gains>
++                        <gain name="" 
++                              mode="AUDIO_GAIN_MODE_JOINT" 
++                              minValueMB="-3200" maxValueMB="600" 
++                              defaultValueMB="0" stepValueMB="100"/>
++                    </gains>
++                </devicePort>
++                <devicePort tagName="vc4hdmi1" type="AUDIO_DEVICE_OUT_BUS" role="sink" address="vc4hdmi1">
++                    <profile name="" 
++                             format="AUDIO_FORMAT_PCM_16_BIT"
++                             samplingRates="48000"
++                             channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
++                    <gains>
++                        <gain name="" 
++                              mode="AUDIO_GAIN_MODE_JOINT" 
++                              minValueMB="-3200" maxValueMB="600" 
++                              defaultValueMB="0" stepValueMB="100"/>
++                    </gains>
+                 </devicePort>
+             </devicePorts>
+             <routes>
+-                <route type="mix" sink="Speaker"
++                <!--route type="mix" sink="Speaker"
+                        sources="primary output"/>
+                 <route type="mix" sink="Wired Headset"
+                        sources="primary output"/>
+@@ -89,9 +132,11 @@
+                 <route type="mix" sink="BT SCO Headset"
+                        sources="primary output"/>
+                 <route type="mix" sink="BT SCO Car Kit"
+-                       sources="primary output"/>
++                       sources="primary output"/-->
+                 <route type="mix" sink="primary input"
+-                       sources="Built-In Mic,Wired Headset Mic,BT SCO Headset Mic"/>
++                       sources="Built-In Mic"/>
++                <route type="mix" sink="vc4hdmi0" sources="mixport_vc4hdmi0"/>
++                <route type="mix" sink="vc4hdmi1" sources="mixport_vc4hdmi1"/>
+             </routes>
+         </module>
+ 
+diff --git a/boot/config.txt b/boot/config.txt
+index 3f42f04..0754d43 100644
+--- a/boot/config.txt
++++ b/boot/config.txt
+@@ -30,13 +30,22 @@ dtoverlay=vc4-kms-v3d
+ #dtparam=i2c_arm=on
+ 
+ # I2S
+-#dtparam=i2s=on
++dtparam=i2s=on
+ 
+ # Serial console
+ enable_uart=1
+ 
+ # SPI
+-#dtparam=spi=on
++dtparam=spi=on
++
++# HDMI
++hdmi_force_hotplug=1
++
++hdmi_group=2
++hdmi_mode=82
++
++hdmi_force_hotplug:0=1
++hdmi_force_hotplug:1=1
+ 
+ # USB
+ dtoverlay=dwc2,dr_mode=peripheral
+diff --git a/car/car_audio_configuration.xml b/car/car_audio_configuration.xml
+index 7b2cf68..3844485 100644
+--- a/car/car_audio_configuration.xml
++++ b/car/car_audio_configuration.xml
+@@ -24,24 +24,48 @@
+ -->
+ <carAudioConfiguration version="3">
+     <zones>
+-        <zone name="Primary zone" isPrimary="true" occupantZoneId="0">
++        <zone name="Primary zone" isPrimary="true" audioZoneId="0" occupantZoneId="0">
+             <zoneConfigs>
+                 <zoneConfig name="Config 0" isDefault="true">
+                     <volumeGroups>
+                         <group>
+-                            <device address="Speaker">
++                            <device address="vc4hdmi0">
+                                 <context context="music"/>
+                                 <context context="navigation"/>
+                                 <context context="voice_command"/>
+-                                <context context="call_ring"/>
++                                <context context="notification"/>
++                                <context context="emergency"/>
++                                <context context="safety"/>
++                                <context context="vehicle_status"/>
++                                <context context="announcement"/>
+                                 <context context="call"/>
++                                <context context="call_ring"/>
+                                 <context context="alarm"/>
+-                                <context context="notification"/>
+                                 <context context="system_sound"/>
++                            </device>
++                        </group>
++                    </volumeGroups>
++                </zoneConfig>
++            </zoneConfigs>
++        </zone>
++        <zone name="Rear zone" audioZoneId="1" occupantZoneId="1">
++            <zoneConfigs>
++                <zoneConfig name="Config 1" isDefault="true">
++                    <volumeGroups>
++                        <group>
++                            <device address="vc4hdmi1">
++                                <context context="music"/>
++                                <context context="navigation"/>
++                                <context context="voice_command"/>
++                                <context context="notification"/>
+                                 <context context="emergency"/>
+                                 <context context="safety"/>
+                                 <context context="vehicle_status"/>
+                                 <context context="announcement"/>
++                                <context context="call"/>
++                                <context context="call_ring"/>
++                                <context context="alarm"/>
++                                <context context="system_sound"/>
+                             </device>
+                         </group>
+                     </volumeGroups>
+diff --git a/car/display_layout_configuration.xml b/car/display_layout_configuration.xml
+new file mode 100644
+index 0000000..d89a0d6
+--- /dev/null
++++ b/car/display_layout_configuration.xml
+@@ -0,0 +1,16 @@
++<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
++<layouts>
++  <layout>
++    <!-- Use the default state -->
++    <state>-1</state>
++
++    <display enabled="true" defaultDisplay="true">
++      <address>4616379479981105920</address>
++    </display>
++
++    <display enabled="true" defaultDisplay="false" displayGroup="rear_zone">
++      <address>4616379479981105921</address>
++    </display>
++
++  </layout>
++</layouts>
+diff --git a/car/display_settings.xml b/car/display_settings.xml
+index 5065838..790dc38 100644
+--- a/car/display_settings.xml
++++ b/car/display_settings.xml
+@@ -2,7 +2,8 @@
+ <display-settings>
+     <!-- Use physical port number instead of local id -->
+     <config identifier="1" />
+-
+-    <!-- Display settings for cluster -->
+-    <display name="port:1" dontMoveToTop="true" />
++    <display name="port:1"
++        shouldShowSystemDecors="true"
++        shouldShowIme="true"
++        forcedDensity="160" />
+ </display-settings>
+diff --git a/overlay/CarServiceRpiOverlay/res/values/config.xml b/overlay/CarServiceRpiOverlay/res/values/config.xml
+index f8d5e05..e499907 100644
+--- a/overlay/CarServiceRpiOverlay/res/values/config.xml
++++ b/overlay/CarServiceRpiOverlay/res/values/config.xml
+@@ -48,7 +48,7 @@
+     -->
+     <string-array translatable="false" name="config_occupant_display_mapping">
+         <item>displayPort=0,displayType=MAIN,occupantZoneId=0,inputTypes=TOUCH_SCREEN|DPAD_KEYS|NAVIGATE_KEYS|ROTARY_NAVIGATION</item>
+-        <item>displayPort=1,displayType=INSTRUMENT_CLUSTER,occupantZoneId=0,inputTypes=DPAD_KEYS</item>
++        <item>displayPort=1,displayType=MAIN,occupantZoneId=1,inputTypes=TOUCH_SCREEN|DPAD_KEYS|NAVIGATE_KEYS|ROTARY_NAVIGATION</item>
+     </string-array>
+ 
+     <!-- Specifies notice UI that will be launched when user starts a car or do user
+diff --git a/vendor.prop b/vendor.prop
+index 93b2d94..e6739cd 100644
+--- a/vendor.prop
++++ b/vendor.prop
+@@ -5,7 +5,7 @@ persist.audio.pcm.card=0
+ persist.audio.pcm.device=0
+ ro.config.media_vol_default=20
+ ro.config.media_vol_steps=25
+-ro.hardware.audio.primary=rpi
++ro.hardware.audio.primary=rpi_hdmi
+ 
+ # Bluetooth
+ bluetooth.device.class_of_device?=90,2,12
+-- 
+2.43.0
+

@@ -1,0 +1,78 @@
+From 87d48dc4c85412bccf71a1cc18996a578dd57285 Mon Sep 17 00:00:00 2001
+From: HariKrishna <hariconscious@gmail.com>
+Date: Wed, 23 Apr 2025 17:46:50 +0530
+Subject: [PATCH] [MultizoneAudio] PoC using 2 HDMI Ports (Primary & Secondary)
+ as 2 zones
+
+Change-Id: Ib9e90652784fd6065dc029e37c2bea67ce2a8835
+---
+ .../android/car/carlauncher/CarLauncher.java  | 22 ++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/app/src/com/android/car/carlauncher/CarLauncher.java b/app/src/com/android/car/carlauncher/CarLauncher.java
+index c789840..6b728f3 100644
+--- a/app/src/com/android/car/carlauncher/CarLauncher.java
++++ b/app/src/com/android/car/carlauncher/CarLauncher.java
+@@ -44,6 +44,8 @@ import androidx.fragment.app.FragmentActivity;
+ import androidx.fragment.app.FragmentTransaction;
+ import androidx.lifecycle.ViewModelProvider;
+ 
++import android.hardware.display.DisplayManager;
++
+ import com.android.car.carlauncher.homescreen.HomeCardModule;
+ import com.android.car.carlauncher.homescreen.audio.IntentHandler;
+ import com.android.car.carlauncher.homescreen.audio.media.MediaIntentRouter;
+@@ -77,6 +79,8 @@ public class CarLauncher extends FragmentActivity {
+     private int mCarLauncherTaskId = INVALID_TASK_ID;
+     private Set<HomeCardModule> mHomeCardModules;
+ 
++    private DisplayManager mDisplayManager;
++
+     /** Set to {@code true} once we've logged that the Activity is fully drawn. */
+     private boolean mIsReadyLogged;
+     private boolean mUseSmallCanvasOptimizedMap;
+@@ -123,6 +127,7 @@ public class CarLauncher extends FragmentActivity {
+     protected void onCreate(Bundle savedInstanceState) {
+         super.onCreate(savedInstanceState);
+ 
++        Log.d(TAG, "HK : onCreate(" + getUserId() + ") displayId=" + getDisplayId());
+         if (DEBUG) {
+             Log.d(TAG, "onCreate(" + getUserId() + ") displayId=" + getDisplayId());
+         }
+@@ -146,10 +151,11 @@ public class CarLauncher extends FragmentActivity {
+                     throw new IllegalStateException(
+                             "Invalid passengerLauncher name=" + passengerLauncherName);
+                 }
++                Log.d(TAG, "HK : Launcher = " + passengerLauncherName);
+                 passengerHomeIntent = new Intent(Intent.ACTION_MAIN)
+                         // passenger launcher should be launched in home task in order to
+                         // fix TaskView layering issue
+-                        .addCategory(Intent.CATEGORY_HOME)
++                        .addCategory(Intent.CATEGORY_SECONDARY_HOME)
+                         .setComponent(component);
+             } else {
+                 // No passenger launcher is specified, then use AppsGrid as a fallback.
+@@ -164,6 +170,20 @@ public class CarLauncher extends FragmentActivity {
+             return;
+         }
+ 
++        mDisplayManager = (DisplayManager) this.getSystemService(DISPLAY_SERVICE);
++        Display[] allDisplays = mDisplayManager.getDisplays();
++        int idx = 0;
++        while(idx < allDisplays.length) {
++            Log.d(TAG, "HK : DisplayInfo displayId= " + allDisplays[idx].getDisplayId());
++            idx++;
++        }
++
++        /*DisplayManager displayManager = (DisplayManager) getSystemService(DISPLAY_SERVICE);
++        Display[] displays = displayManager.getDisplays();
++        for (Display display : displays) {
++            Log.d("HK : DisplayInfo", "Display ID: " + display.getDisplayId());
++        }*/
++
+         mUseSmallCanvasOptimizedMap =
+                 CarLauncherUtils.isSmallCanvasOptimizedMapIntentConfigured(this);
+ 
+-- 
+2.43.0
+

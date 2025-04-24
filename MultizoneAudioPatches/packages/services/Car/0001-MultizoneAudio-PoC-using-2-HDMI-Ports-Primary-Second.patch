@@ -1,0 +1,79 @@
+From bd41bfc891b82c1cc3f3d84d9fd8c396772448b4 Mon Sep 17 00:00:00 2001
+From: HariKrishna <hariconscious@gmail.com>
+Date: Wed, 23 Apr 2025 17:46:50 +0530
+Subject: [PATCH] [MultizoneAudio] PoC using 2 HDMI Ports (Primary & Secondary)
+ as 2 zones
+
+Change-Id: I2d4056e7ea77a22169f69834b0039c1fd946e94e
+---
+ car_product/build/car.mk      | 5 +++--
+ service/res/values/config.xml | 7 +++++--
+ 2 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/car_product/build/car.mk b/car_product/build/car.mk
+index 40c4a60..acfa7c3 100644
+--- a/car_product/build/car.mk
++++ b/car_product/build/car.mk
+@@ -52,6 +52,7 @@ PRODUCT_PACKAGES += \
+     RailwayReferenceApp \
+     CarHotwordDetectionServiceOne \
+     KitchenSinkServerlessRemoteTaskClientRRO \
++    MultiDisplaySecondaryHomeTestLauncher    \
+ 
+ # SEPolicy for test apps / services
+ PRODUCT_PRIVATE_SEPOLICY_DIRS += packages/services/Car/car_product/sepolicy/test
+@@ -60,10 +61,10 @@ endif
+ # ClusterOsDouble is the testing app to test Cluster2 framework and it can handle Cluster VHAL
+ # and do some Cluster OS role.
+ ifeq ($(ENABLE_CLUSTER_OS_DOUBLE), true)
+-PRODUCT_PACKAGES += ClusterHomeSample ClusterOsDouble
++# PRODUCT_PACKAGES += ClusterHomeSample ClusterOsDouble
+ else
+ # DirectRenderingCluster is the sample app for the old Cluster framework.
+-PRODUCT_PACKAGES += DirectRenderingCluster
++# PRODUCT_PACKAGES += DirectRenderingCluster
+ endif  # ENABLE_CLUSTER_OS_DOUBLE
+ 
+ PRODUCT_PROPERTY_OVERRIDES += \
+diff --git a/service/res/values/config.xml b/service/res/values/config.xml
+index 530695a..8283897 100644
+--- a/service/res/values/config.xml
++++ b/service/res/values/config.xml
+@@ -24,7 +24,7 @@
+     <!--  Configuration to enable usage of dynamic audio routing. If this is set to false,
+           dynamic audio routing is disabled and audio works in legacy mode. It may be useful
+           during initial development where audio hal does not support bus based addressing yet. -->
+-    <bool name="audioUseDynamicRouting">false</bool>
++    <bool name="audioUseDynamicRouting">true</bool>
+ 
+     <!--  Configuration to enable usage of core audio volume API, aka using AudioManager's
+           AudioAttributes based volume API.
+@@ -395,6 +395,7 @@
+     -->
+     <string-array translatable="false" name="config_occupant_zones">
+         <item>occupantZoneId=0,occupantType=DRIVER,seatRow=1,seatSide=driver</item>
++        <item>occupantZoneId=1,occupantType=REAR_PASSENGER,seatRow=2,seatSide=right</item>
+     </string-array>
+     <!--
+         Specifies configuration of displays in system telling its usage / type and assigned
+@@ -425,6 +426,8 @@
+ 
+     -->
+     <string-array translatable="false" name="config_occupant_display_mapping">
++        <item>displayPort=0,displayType=MAIN,occupantZoneId=0</item>
++        <item>displayPort=1,displayType=MAIN,occupantZoneId=1</item>
+     </string-array>
+ 
+     <!-- Specifies notice UI that will be launched when user starts a car or do user
+@@ -499,7 +502,7 @@
+ 
+     <!-- Enable profile user assignment per each CarOccupantZone for per display android user
+          assignments. This feature is still experimental. -->
+-    <bool name="enableProfileUserAssignmentForMultiDisplay" translatable="false">false</bool>
++    <bool name="enableProfileUserAssignmentForMultiDisplay" translatable="false">true</bool>
+ 
+     <!-- The ComponentName of the media source that will be selected as the default -->
+     <string name="config_defaultMediaSource">com.android.car.radio/.service.RadioAppService</string>
+-- 
+2.43.0
+
